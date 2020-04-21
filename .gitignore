@@ -1,0 +1,7 @@
+data/annotation_data.pkl
+data/data.pkl
+data/suppl_data.pkl
+__pycache__/
+models/__pycache__/
+utils/__pycache__/
+output/
