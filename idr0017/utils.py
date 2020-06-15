@@ -13,13 +13,15 @@ DATA_FOLDER = "data"
 UMAP_FOLDER = "umap"
 HDBSCAN_FOLDER = "hdbscan"
 
+
 def get_umap_projection(data_ftr_vals, n_components=2, seed=4285866):
     """
     Calculate the UMAP projection for a feature data matrix with caching.
     """
     if not exists(join(DATA_FOLDER, UMAP_FOLDER)):
         os.makedirs(join(DATA_FOLDER, UMAP_FOLDER))
-    fname = ("umap_" + str(n_components) + "_" + str(seed)+ "_" + str(hash(str(data_ftr_vals)))  + ".pkl")
+    fname = ("umap_" + str(n_components) + "_" + str(seed) + "_" +
+             str(data_ftr_vals[0, ...].sum()) + ".pkl")
 
     if exists(join(DATA_FOLDER, UMAP_FOLDER, fname)):
         print("Loading cached UMAP...")
@@ -34,13 +36,14 @@ def get_umap_projection(data_ftr_vals, n_components=2, seed=4285866):
         pickle.dump({"embedding": embedding, "reducer": reducer}, f)
     return embedding, reducer
 
+
 def get_hdbscan_clustering(embedding, min_cluster_size=60, cluster_selection_epsilon=0.32,  min_samples=30):
     if not exists(join(DATA_FOLDER, HDBSCAN_FOLDER)):
         os.makedirs(join(DATA_FOLDER, HDBSCAN_FOLDER))
-    fname = ("hdbscan_" + str(min_cluster_size) + 
-            "_" + str(cluster_selection_epsilon)+ 
-            "_" + str(min_samples)+ 
-            "_" + str(hash(str(embedding)))  + ".pkl")
+    fname = ("hdbscan_" + str(min_cluster_size) +
+             "_" + str(cluster_selection_epsilon) +
+             "_" + str(min_samples) +
+             "_" + str(embedding[0, ...].sum()) + ".pkl")
 
     if exists(join(DATA_FOLDER, HDBSCAN_FOLDER, fname)):
         print("Loading cached HDBSCAN...")
@@ -48,14 +51,12 @@ def get_hdbscan_clustering(embedding, min_cluster_size=60, cluster_selection_eps
             hdbscan_data = pickle.load(f)
             return hdbscan_data["labels"], hdbscan_data["clusterer"]
 
-    
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, 
-        cluster_selection_epsilon=cluster_selection_epsilon, min_samples=min_samples).fit(embedding)
-    hdbscan_data = {"labels":clusterer.labels_,  "clusterer": clusterer}
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size,
+                                cluster_selection_epsilon=cluster_selection_epsilon, min_samples=min_samples).fit(embedding)
+    hdbscan_data = {"labels": clusterer.labels_,  "clusterer": clusterer}
     with open(join(DATA_FOLDER, HDBSCAN_FOLDER, fname), "wb") as f:
         pickle.dump(hdbscan_data, f)
     return hdbscan_data["labels"], hdbscan_data["clusterer"]
-
 
 
 # Unsupervised feature selection
@@ -64,11 +65,14 @@ def rank_features(data_matrix, criterion="variance"):
     if criterion == "variance":
         # Highest variance
         variances = np.var(data_matrix, axis=0)
-        sorted_idxs = sorted(range(len(variances)), key=lambda i: variances[i], reverse=True)   
+        sorted_idxs = sorted(range(len(variances)),
+                             key=lambda i: variances[i], reverse=True)
     elif criterion == "normalized_std":
         # Highest std/max
-        norm_std_devs = np.divide(np.std(data_matrix, axis=0), np.max(data_matrix, axis=0))
-        sorted_idxs = sorted(range(len(norm_std_devs)), key=lambda i: norm_std_devs[i], reverse=True)
+        norm_std_devs = np.divide(
+            np.std(data_matrix, axis=0), np.max(data_matrix, axis=0))
+        sorted_idxs = sorted(range(len(norm_std_devs)),
+                             key=lambda i: norm_std_devs[i], reverse=True)
     else:
         raise ValueError("Select a valid criterion")
     return sorted_idxs

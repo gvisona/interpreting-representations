@@ -1,0 +1,78 @@
+batch_size: 64
+beta: 4.0
+config: vae_config.yml
+conv_batch_norm: false
+conv_decoder_activations: ReLU
+conv_decoder_dilations:
+- 1
+- 1
+- 1
+conv_decoder_feature_maps:
+- 64
+- 32
+- 16
+conv_decoder_final_activation: false
+conv_decoder_kernel_sizes:
+- 4
+- 4
+- 4
+- 4
+conv_decoder_paddings:
+- 1
+- 1
+- 1
+- 1
+conv_decoder_strides:
+- 3
+- 3
+- 2
+- 2
+conv_encoder_activations: ReLU
+conv_encoder_dilations:
+- 1
+- 1
+- 1
+- 1
+conv_encoder_feature_maps:
+- 8
+- 32
+- 64
+conv_encoder_kernel_sizes:
+- 4
+- 4
+- 4
+conv_encoder_paddings:
+- 1
+- 1
+- 1
+conv_encoder_strides:
+- 2
+- 2
+- 2
+crop_output: true
+experiment_name: betaVAE_MNIST
+fc_batch_norm: false
+fc_decoder_activations: ReLU
+fc_decoder_hidden_layers:
+- 64
+- 256
+fc_dropout_p: 0.0
+fc_encoder_activations: ReLU
+fc_encoder_hidden_layers:
+- 64
+gpus: 0
+input_channels: 3
+input_size: 128
+latent_dim: 16
+learning_rate: 0.005
+log_dir: /home/gvisona/Desktop/runs
+lr_scheduler: null
+max_epochs: 2
+model_dir: /home/gvisona/Desktop/runs
+output_activation: false
+reconstruction_loss: MSE
+scheduler_gamma: null
+scheduler_step_size: null
+seed: 0
+warmup_epochs: 2
+weight_decay: 0.0001

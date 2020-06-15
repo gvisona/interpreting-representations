@@ -1,0 +1,5 @@
+setup.py
+dsrepr.egg-info/PKG-INFO
+dsrepr.egg-info/SOURCES.txt
+dsrepr.egg-info/dependency_links.txt
+dsrepr.egg-info/top_level.txt
