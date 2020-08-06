@@ -221,11 +221,7 @@ class DataManager:
         
         print("Preprocessing complete")
 
-    def get_control_samples(self):
-        """
-        Returns the indeces of the control samples in the data dataframe
-        """
-        # Identify control samples
+    def get_dmso_samples(self):
         dmso_indexes = []
         for row in self.drug_df.itertuples():
             #"dimethyl" in row.Name or "DMSO" in row.SecName or 
@@ -233,7 +229,15 @@ class DataManager:
                 dmso_indexes.append(row.Index)
                 
         control_data = self.data[(self.data["drug"].isin(dmso_indexes))]
-        control_samples = control_data[control_data["cell_line"]==3].index
+        return control_data
+
+    def get_control_samples(self):
+        """
+        Returns the indeces of the control samples in the data dataframe
+        """
+        # Identify control samples
+        control_data = self.get_dmso_samples()
+        control_samples = control_data[(control_data["cell_line"]==4)|(control_data["cell_line"]==11)].index
         return control_samples
 
     def get_top_interactions(self, percentile=2):

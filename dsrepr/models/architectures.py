@@ -1,5 +1,8 @@
+from itertools import cycle
+import numpy as np
 import torch
 import torch.nn as nn
+from dsrepr.utils.functions import gaussian_reparameterization, calc_output_size_convnet, calc_output_size_transpose_convnet
 
 
 class ConvolutionalModule(nn.Module):
@@ -189,121 +192,110 @@ class FullyConnectedModule(nn.Module):
 
 
 
+class ConvolutionalEncoder(nn.Module):
+    def __init__(self, hparams):
+        super(ConvolutionalEncoder, self).__init__()
+        if isinstance(hparams.conv_encoder_activations, str):
+            conv_encoder_activations = [getattr(
+                nn, hparams.conv_encoder_activations)]*len(hparams.conv_encoder_feature_maps)
+        elif isinstance(hparams.conv_encoder_activations, (list, tuple)):
+            conv_encoder_activations = [
+                getattr(nn, act) for act in hparams.conv_encoder_activations]
+            if len(conv_encoder_activations)<len(hparams.conv_encoder_feature_maps):
+                available_activations = cycle(conv_encoder_activations)
+                conv_encoder_activations = [next(available_activations) for _ in range(len(hparams.conv_encoder_feature_maps))]
 
-# class ConvolutionalEncoder(nn.Module):
+        input_channels = hparams.input_channels
+        self.encoder_conv = ConvolutionalModule(input_channels=input_channels,
+                                                feature_maps=hparams.conv_encoder_feature_maps,
+                                                kernel_sizes=hparams.conv_encoder_kernel_sizes,
+                                                paddings=hparams.conv_encoder_paddings,
+                                                strides=hparams.conv_encoder_strides,
+                                                dilations=hparams.conv_encoder_dilations,
+                                                batch_norm=hparams.conv_batch_norm,
+                                                activations=conv_encoder_activations,
+                                                final_activation=True)
 
-#     def __init__(self,
-#                  latent_dim=32,
-#                  input_channels=1,
-#                  feature_maps=[32, 32, 64, 64],
-#                  kernel_sizes=[4, 4, 4, 4],
-#                  paddings=1,
-#                  strides=2,
-#                  final_size=[4, 4],
-#                  fc_layers=[256],
-#                  act_class=nn.ReLU):
-#         super(ConvolutionalEncoder, self).__init__()
+        final_shape = calc_output_size_convnet(hparams.input_size, hparams.conv_encoder_kernel_sizes, hparams.conv_encoder_paddings,
+                                               hparams.conv_encoder_strides, hparams.conv_encoder_dilations)
 
-#         assert isinstance(feature_maps, (list, tuple))
-#         if isinstance(kernel_sizes, int):
-#             kernel_sizes = [kernel_sizes]*len(feature_maps)
-#         if isinstance(paddings, int):
-#             paddings = [paddings]*len(feature_maps)
-#         if isinstance(strides, int):
-#             strides = [strides]*len(feature_maps)
-#         assert len(feature_maps) == len(
-#             kernel_sizes) == len(paddings) == len(strides)
-#         # convolutional blocks
-#         conv_blocks = []
-#         map_dim = [in_channels] + feature_maps
-#         for k in range(len(map_dim) - 1):
-#             conv_blocks.append(
-#                 nn.Sequential(nn.Conv2d(in_channels=map_dim[k],
-#                                         out_channels=map_dim[k+1],
-#                                         kernel_size=kernel_sizes[k],
-#                                         padding=1,
-#                                         stride=2),
-#                               act_class()))
-#         self.conv_net = nn.Sequential(*conv_blocks)
+        self.encoder_fc = None
+        output_dim = final_shape[0]*final_shape[1]*hparams.conv_encoder_feature_maps[-1]
+        if hparams.fc_encoder_hidden_layers:
+            if isinstance(hparams.fc_encoder_activations, str):
+                fc_encoder_activations = [getattr(
+                    nn, hparams.fc_encoder_activations)]*len(hparams.fc_encoder_hidden_layers)
+            elif isinstance(hparams.fc_encoder_activations, (list, tuple)):
+                fc_encoder_activations = [
+                    getattr(nn, act) for act in hparams.fc_encoder_activations]
+                if len(fc_encoder_activations)<len(hparams.fc_encoder_hidden_layers):
+                    available_activations = cycle(fc_encoder_activations)
+                    fc_encoder_activations = [next(available_activations) for _ in range(len(hparams.fc_encoder_hidden_layers))]
 
-#         # flattening
-#         flattened_tensor_length = final_size[0]*final_size[1]*feature_maps[-1]
+            self.encoder_fc = FullyConnectedModule(input_size=output_dim,
+                                                   hidden_layers=hparams.fc_encoder_hidden_layers,
+                                                   dropout_p=hparams.fc_dropout_p,
+                                                   activations=fc_encoder_activations,
+                                                   batch_norm=hparams.fc_batch_norm,
+                                                   final_activation=True)
+            output_dim=hparams.fc_encoder_hidden_layers[-1]
+        self.output_dim = output_dim
 
-#         # fc blocks
-#         fc_blocks = []
-#         fc_layers.insert(0, flattened_tensor_length)
-#         for k in range(len(fc_layers) - 1):
-#             fc_blocks.append(
-#                 nn.Sequential(
-#                     nn.Linear(fc_layers[k], fc_layers[k+1]),
-#                     act_class()))
-#         self.fc_net = nn.Sequential(*fc_blocks)
-
-#         self.fc_mu = nn.Linear(fc_layers[-1], latent_dim)
-#         self.fc_var = nn.Linear(fc_layers[-1], latent_dim)
-
-#     def forward(self, x):
-
-#         # convolutional blocks
-#         x = self.conv_net(x)
-#         # flattening
-#         x = torch.flatten(x, start_dim=1)
-#         # fc blocks
-#         x = self.fc_net(x)
-#         # split the result into mu and var components
-#         # of the latent Gaussian distribution
-#         mu = self.fc_mu(x)
-#         logvar = self.fc_var(x)
-
-#         return mu, logvar
+    def forward(self, x):
+        x = self.encoder_conv(x)
+        x = torch.flatten(x, start_dim=1)
+        if self.encoder_fc is not None:
+            x = self.encoder_fc(x)
+        return x
 
 
-# class TransposeConvolutionalDecoder(torch.nn.Module):
+class TransposeConvolutionalDecoder(nn.Module):
+    def __init__(self, hparams):
+        super(TransposeConvolutionalDecoder, self).__init__()
+        self.decoder_fc = None
+        if hparams.fc_decoder_hidden_layers:
+            if isinstance(hparams.fc_decoder_activations, str):
+                fc_decoder_activations = [
+                    getattr(nn, hparams.fc_decoder_activations)]*len(hparams.fc_decoder_hidden_layers)
+            elif isinstance(hparams.fc_decoder_activations, (list, tuple)):
+                fc_decoder_activations = [
+                    getattr(nn, act) for act in hparams.fc_decoder_activations]
+                if len(fc_decoder_activations)<len(hparams.fc_decoder_hidden_layers):
+                    available_activations = cycle(fc_decoder_activations)
+                    fc_decoder_activations = [next(available_activations) for _ in range(len(hparams.fc_decoder_hidden_layers))]
+            self.decoder_fc = FullyConnectedModule(input_size=hparams.latent_dim,
+                                                   hidden_layers=hparams.fc_decoder_hidden_layers,
+                                                   dropout_p=hparams.fc_dropout_p,
+                                                   activations=fc_decoder_activations,
+                                                   batch_norm=hparams.fc_batch_norm,
+                                                   final_activation=True)
 
-#     def __init__(self,
-#                  latent_dim=32,
-#                  out_channels=1,
-#                  feature_maps=[64, 64, 32, 32],
-#                  kernel_size=[4, 4, 4, 4],
-#                  start_size=[4, 4],
-#                  act_class=nn.ReLU,
-#                  output_act_class=None):
+        conv_decoder_feature_maps = hparams.conv_decoder_feature_maps + [hparams.input_channels]
+        conv_decoder_input_channels, conv_decoder_feature_maps = conv_decoder_feature_maps[0], conv_decoder_feature_maps[1:]
+        self.conv_decoder_input_channels = conv_decoder_input_channels
+        if isinstance(hparams.conv_decoder_activations, str):
+            conv_decoder_activations = [getattr(
+                nn, hparams.conv_decoder_activations)]*len(hparams.conv_decoder_feature_maps)
+        elif isinstance(hparams.conv_decoder_activations, (list, tuple)):
+            conv_decoder_activations = [
+                getattr(nn, act) for act in hparams.conv_decoder_activations]
+            if len(conv_decoder_activations)<len(hparams.conv_decoder_feature_maps):
+                available_activations = cycle(conv_decoder_activations)
+                conv_decoder_activations = [next(available_activations) for _ in range(len(hparams.conv_decoder_feature_maps))]
+        self.decoder_conv = TransposeConvolutionalModule(input_channels=conv_decoder_input_channels,
+                                                         feature_maps=conv_decoder_feature_maps,
+                                                         kernel_sizes=hparams.conv_decoder_kernel_sizes,
+                                                         paddings=hparams.conv_decoder_paddings,
+                                                         strides=hparams.conv_decoder_strides,
+                                                         dilations=hparams.conv_decoder_dilations,
+                                                         batch_norm=hparams.conv_batch_norm,
+                                                         final_activation=hparams.conv_decoder_final_activation,
+                                                         activations=conv_decoder_activations)
 
-#         super(TransposeConvolutionalDecoder, self).__init__()
-
-#         # copy over
-#         self.feature_maps = feature_maps
-#         self.pool_size = start_size
-
-#         flattened_tensor_length = start_size[0]*start_size[1]*feature_maps[0]
-#         self.input_layer = nn.Linear(latent_dim, flattened_tensor_length)
-
-#         # deconvolutional blocks
-#         deconv_blocks = []
-#         map_dim = feature_maps + [out_channels]
-#         for k in range(len(map_dim) - 1):
-#             module_list = [nn.ConvTranspose2d(
-#                 in_channels=map_dim[k],
-#                 out_channels=map_dim[k+1],
-#                 kernel_size=kernel_size[k],
-#                 padding=1,
-#                 stride=2)]
-#             # add activations
-#             if k < len(feature_maps) - 2:
-#                 module_list.append(act_class())
-#             else:
-#                 if output_act_class:
-#                     module_list.append(output_act_class())
-#             deconv_blocks.append(nn.Sequential(*module_list))
-
-#         self.deconv_net = nn.Sequential(*deconv_blocks)
-
-#     def forward(self, x):
-#         # reshape
-#         x = self.input_layer(x)
-#         x = x.view(-1, self.feature_maps[0],
-#                    self.pool_size[0], self.pool_size[1])
-
-#         # deconvolutional blocks
-#         x = self.deconv_net(x)
-#         return x
+    def forward(self, z):
+        if self.decoder_fc is not None:
+            z = self.decoder_fc(z)
+        z_shape = z.shape
+        h = int(np.sqrt(z_shape[-1]/self.conv_decoder_input_channels))
+        out = self.decoder_conv(z.view(z_shape[0],self.conv_decoder_input_channels, h, -1))
+        return out

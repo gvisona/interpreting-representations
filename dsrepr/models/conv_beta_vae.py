@@ -9,8 +9,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sys
 from itertools import cycle
-from dsrepr.models.architectures import FullyConnectedModule, ConvolutionalModule, TransposeConvolutionalModule
-from dsrepr.models.losses import VAE_loss, BetaVAE_Loss
+from dsrepr.models.architectures import ConvolutionalEncoder, TransposeConvolutionalDecoder
 from dsrepr.utils.functions import gaussian_reparameterization, calc_output_size_convnet, calc_output_size_transpose_convnet
 from dsrepr.utils.helpers import ArgRange
 from dsrepr.utils.viz import random_compare
@@ -28,93 +27,15 @@ class ConvolutionalBetaVAE(LightningModule):
         self.val_dataset = val_dataset
         self.test_dataset = test_dataset
 
-        if isinstance(hparams.conv_encoder_activations, str):
-            conv_encoder_activations = [getattr(
-                nn, hparams.conv_encoder_activations)]*len(hparams.conv_encoder_feature_maps)
-        elif isinstance(hparams.conv_encoder_activations, (list, tuple)):
-            conv_encoder_activations = [
-                getattr(nn, act) for act in hparams.conv_encoder_activations]
-            if len(conv_encoder_activations)<len(hparams.conv_encoder_feature_maps):
-                available_activations = cycle(conv_encoder_activations)
-                conv_encoder_activations = [next(available_activations) for _ in range(len(hparams.conv_encoder_feature_maps))]
+        self.conv_encoder = ConvolutionalEncoder(hparams)
 
-        input_channels = hparams.input_channels
-        self.encoder_conv = ConvolutionalModule(input_channels=input_channels,
-                                                feature_maps=hparams.conv_encoder_feature_maps,
-                                                kernel_sizes=hparams.conv_encoder_kernel_sizes,
-                                                paddings=hparams.conv_encoder_paddings,
-                                                strides=hparams.conv_encoder_strides,
-                                                dilations=hparams.conv_encoder_dilations,
-                                                batch_norm=hparams.conv_batch_norm,
-                                                activations=conv_encoder_activations,
-                                                final_activation=True)
-
-        final_shape = calc_output_size_convnet(hparams.input_size, hparams.conv_encoder_kernel_sizes, hparams.conv_encoder_paddings,
-                                               hparams.conv_encoder_strides, hparams.conv_encoder_dilations)
-
-        self.encoder_fc = None
-        split_input_dim = final_shape[0]*final_shape[1]*hparams.conv_encoder_feature_maps[-1]
-        if hparams.fc_encoder_hidden_layers:
-            if isinstance(hparams.fc_encoder_activations, str):
-                fc_encoder_activations = [getattr(
-                    nn, hparams.fc_encoder_activations)]*len(hparams.fc_encoder_hidden_layers)
-            elif isinstance(hparams.fc_encoder_activations, (list, tuple)):
-                fc_encoder_activations = [
-                    getattr(nn, act) for act in hparams.fc_encoder_activations]
-                if len(fc_encoder_activations)<len(hparams.fc_encoder_hidden_layers):
-                    available_activations = cycle(fc_encoder_activations)
-                    fc_encoder_activations = [next(available_activations) for _ in range(len(hparams.fc_encoder_hidden_layers))]
-
-            self.encoder_fc = FullyConnectedModule(input_size=split_input_dim,
-                                                   hidden_layers=hparams.fc_encoder_hidden_layers,
-                                                   dropout_p=hparams.fc_dropout_p,
-                                                   activations=fc_encoder_activations,
-                                                   batch_norm=hparams.fc_batch_norm,
-                                                   final_activation=True)
-            split_input_dim = hparams.fc_encoder_hidden_layers[-1]
+        split_input_dim = self.conv_encoder.output_dim
 
         self.fc_mu = nn.Linear(split_input_dim, hparams.latent_dim)
         self.fc_logvar = nn.Linear(split_input_dim, hparams.latent_dim)
 
-        self.decoder_fc = None
-        if hparams.fc_decoder_hidden_layers:
-            if isinstance(hparams.fc_decoder_activations, str):
-                fc_decoder_activations = [
-                    getattr(nn, hparams.fc_decoder_activations)]*len(hparams.fc_decoder_hidden_layers)
-            elif isinstance(hparams.fc_decoder_activations, (list, tuple)):
-                fc_decoder_activations = [
-                    getattr(nn, act) for act in hparams.fc_decoder_activations]
-                if len(fc_decoder_activations)<len(hparams.fc_decoder_hidden_layers):
-                    available_activations = cycle(fc_decoder_activations)
-                    fc_decoder_activations = [next(available_activations) for _ in range(len(hparams.fc_decoder_hidden_layers))]
-            self.decoder_fc = FullyConnectedModule(input_size=hparams.latent_dim,
-                                                   hidden_layers=hparams.fc_decoder_hidden_layers,
-                                                   dropout_p=hparams.fc_dropout_p,
-                                                   activations=fc_decoder_activations,
-                                                   batch_norm=hparams.fc_batch_norm,
-                                                   final_activation=True)
+        self.tconv_decoder = TransposeConvolutionalDecoder(hparams)
 
-        conv_decoder_feature_maps = hparams.conv_decoder_feature_maps + [input_channels]
-        conv_decoder_input_channels, conv_decoder_feature_maps = conv_decoder_feature_maps[0], conv_decoder_feature_maps[1:]
-        self.conv_decoder_input_channels = conv_decoder_input_channels
-        if isinstance(hparams.conv_decoder_activations, str):
-            conv_decoder_activations = [getattr(
-                nn, hparams.conv_decoder_activations)]*len(hparams.conv_decoder_feature_maps)
-        elif isinstance(hparams.conv_decoder_activations, (list, tuple)):
-            conv_decoder_activations = [
-                getattr(nn, act) for act in hparams.conv_decoder_activations]
-            if len(conv_decoder_activations)<len(hparams.conv_decoder_feature_maps):
-                available_activations = cycle(conv_decoder_activations)
-                conv_decoder_activations = [next(available_activations) for _ in range(len(hparams.conv_decoder_feature_maps))]
-        self.decoder_conv = TransposeConvolutionalModule(input_channels=conv_decoder_input_channels,
-                                                         feature_maps=conv_decoder_feature_maps,
-                                                         kernel_sizes=hparams.conv_decoder_kernel_sizes,
-                                                         paddings=hparams.conv_decoder_paddings,
-                                                         strides=hparams.conv_decoder_strides,
-                                                         dilations=hparams.conv_decoder_dilations,
-                                                         batch_norm=hparams.conv_batch_norm,
-                                                         final_activation=hparams.conv_decoder_final_activation,
-                                                         activations=conv_decoder_activations)
 
         if hparams.reconstruction_loss == "MSE":
             self.reconstruction_loss = F.mse_loss
@@ -124,20 +45,17 @@ class ConvolutionalBetaVAE(LightningModule):
             self.reconstruction_loss = nn.SmoothL1Loss()
 
     def encode(self, x):
-        x = self.encoder_conv(x)
-        x = torch.flatten(x, start_dim=1)
-        if self.encoder_fc is not None:
-            x = self.encoder_fc(x)
+        # x = self.encoder_conv(x)
+        # x = torch.flatten(x, start_dim=1)
+        # if self.encoder_fc is not None:
+        #     x = self.encoder_fc(x)
+        x = self.conv_encoder(x)
         mu = self.fc_mu(x)
         logvar = self.fc_logvar(x)
         return mu, logvar
 
     def decode(self, z):
-        if self.decoder_fc is not None:
-            z = self.decoder_fc(z)
-        z_shape = z.shape
-        h = int(np.sqrt(z_shape[-1]/self.conv_decoder_input_channels))
-        out = self.decoder_conv(z.view(z_shape[0],self.conv_decoder_input_channels, h, -1))
+        out = self.tconv_decoder(z)
         return out
 
     def loss_function(self, reconstr_x, x, mu, log_var, kld_weight=1.0, beta=1.0):
